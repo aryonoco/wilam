@@ -34,7 +34,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: postgresql
-          image: ghcr.io/immich-app/postgres:14-vectorchord0.4.3-pgvectors0.2.0
+          image: ghcr.io/immich-app/postgres:14-vectorchord0.5.3-pgvector0.8.1
           args:
             - "postgres"
             - "-c"
