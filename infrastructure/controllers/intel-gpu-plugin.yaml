@@ -1,0 +1,23 @@
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: intel-gpu-plugin
+  namespace: intel-device-plugins-gpu
+spec:
+  interval: 1h
+  dependsOn:
+    - name: intel-device-plugins-operator
+    - name: node-feature-discovery
+      namespace: node-feature-discovery
+  chart:
+    spec:
+      chart: intel-gpu-plugin
+      version: ">=0.31.0 <1.0.0"
+      sourceRef:
+        kind: HelmRepository
+        name: intel
+        namespace: flux-system
+  values:
+    name: gpu-plugin
+    sharedDevNum: 5
+    nodeFeatureRule: true

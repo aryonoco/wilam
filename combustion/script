@@ -1,0 +1,174 @@
+#!/bin/bash
+# combustion: network
+# SPDX-License-Identifier: MIT
+#
+# Combustion first-boot provisioner for openSUSE Leap Micro 6.2
+# ─────────────────────────────────────────────────────────────
+# This script runs ONCE during initial boot, before the root filesystem
+# becomes immutable. It handles ONLY the things that cannot be done later:
+#
+#   • System identity (hostname, timezone)
+#   • User access (root pw, admin user, SSH keys)
+#   • Package installation (requires Combustion's transactional-update context)
+#   • Service enablement (for packages above)
+#   • Filesystem paths on immutable root (/mnt/downloads)
+#
+# Everything else (k3s config, cluster setup) lives in scripts/bootstrap.sh
+# which runs after first login on the live system.
+#
+# Usage:
+#   1. Copy this file to a FAT partition labelled "combustion"
+#   2. Edit the configuration section below
+#   3. Plug USB into machine, boot Leap Micro installer
+#
+# shellcheck shell=bash
+
+set -euo pipefail
+
+# ── Error handling ──────────────────────────────────────────────────────────
+
+readonly LOG_TAG="combustion"
+
+log()  { printf '[%s] %s\n' "${LOG_TAG}" "$*"; }
+warn() { printf '[%s] WARN: %s\n' "${LOG_TAG}" "$*" >&2; }
+die()  { printf '[%s] FATAL: %s\n' "${LOG_TAG}" "$*" >&2; exit 1; }
+
+# Report the failing line on any uncaught error
+trap 'die "unexpected failure at line ${LINENO} (exit code $?)"' ERR
+
+log "starting first-boot provisioning"
+
+# ── Configuration (edit before use) ─────────────────────────────────────────
+# These are the ONLY values you need to change.
+
+readonly CONF_HOSTNAME="k3s-node.local"
+readonly CONF_TIMEZONE="UTC"
+readonly CONF_ADMIN_USER="admin"
+
+# Generate hashes with: mkpasswd --method=sha-512 --rounds=100000
+readonly CONF_ADMIN_HASH='$6$rounds=100000$YOURSALTHERE$YOURHASHHERE'
+readonly CONF_ROOT_HASH='$6$rounds=100000$YOURSALTHERE$YOURHASHHERE'
+
+readonly CONF_SSH_PUBKEY="ssh-ed25519 AAAA... you@workstation"
+
+# GID/UID for the media downloads directory (must match k8s pod fsGroup)
+readonly CONF_DOWNLOADS_GID=1500
+readonly CONF_DOWNLOADS_UID=10006
+readonly CONF_DOWNLOADS_PATH="/mnt/downloads"
+
+# ── Validation ──────────────────────────────────────────────────────────────
+# Catch placeholder values before they silently misconfigure the system.
+
+[[ "${CONF_ADMIN_HASH}" == *'YOURSALTHERE'* ]] && die "CONF_ADMIN_HASH still contains placeholder — generate a real hash"
+[[ "${CONF_ROOT_HASH}"  == *'YOURSALTHERE'* ]] && die "CONF_ROOT_HASH still contains placeholder — generate a real hash"
+[[ "${CONF_SSH_PUBKEY}"  == *'AAAA...'*     ]] && die "CONF_SSH_PUBKEY still contains placeholder — paste your real public key"
+
+# ── 1. System identity ──────────────────────────────────────────────────────
+
+log "setting hostname to ${CONF_HOSTNAME}"
+hostnamectl set-hostname "${CONF_HOSTNAME}"
+
+if [[ -f "/usr/share/zoneinfo/${CONF_TIMEZONE}" ]]; then
+    ln -sf "/usr/share/zoneinfo/${CONF_TIMEZONE}" /etc/localtime
+    log "timezone set to ${CONF_TIMEZONE}"
+else
+    die "timezone '${CONF_TIMEZONE}' does not exist in /usr/share/zoneinfo"
+fi
+
+# ── 2. User access ─────────────────────────────────────────────────────────
+
+log "configuring root password"
+printf '%s:%s\n' "root" "${CONF_ROOT_HASH}" | chpasswd -e
+
+if id "${CONF_ADMIN_USER}" &>/dev/null; then
+    log "user '${CONF_ADMIN_USER}' already exists — updating password"
+else
+    log "creating user '${CONF_ADMIN_USER}'"
+    useradd -m -G wheel "${CONF_ADMIN_USER}"
+fi
+printf '%s:%s\n' "${CONF_ADMIN_USER}" "${CONF_ADMIN_HASH}" | chpasswd -e
+
+# SSH authorized_keys for both root and admin
+_configure_ssh_dir() {
+    local home_dir="$1" owner="$2"
+    local ssh_dir="${home_dir}/.ssh"
+    local auth_keys="${ssh_dir}/authorized_keys"
+
+    mkdir -p "${ssh_dir}"
+    # Append only if the key isn't already present (idempotent)
+    if ! grep -qF "${CONF_SSH_PUBKEY}" "${auth_keys}" 2>/dev/null; then
+        printf '%s\n' "${CONF_SSH_PUBKEY}" >> "${auth_keys}"
+    fi
+    chmod 700 "${ssh_dir}"
+    chmod 600 "${auth_keys}"
+    chown -R "${owner}:${owner}" "${ssh_dir}"
+}
+
+_configure_ssh_dir "/root" "root"
+_configure_ssh_dir "/home/${CONF_ADMIN_USER}" "${CONF_ADMIN_USER}"
+log "SSH keys configured"
+
+# ── 3. Package installation ─────────────────────────────────────────────────
+# This is WHY Combustion exists for us — zypper runs inside the
+# transactional-update snapshot context that Combustion provides.
+# After first boot, package installs require transactional-update + reboot.
+
+readonly -a PACKAGES=(
+    # Management
+    patterns-microos-cockpit
+    cockpit-storaged
+    cockpit-networkmanager
+    bash-completion
+
+    # Storage clients (NFS for media/photos, iSCSI reserved for future use)
+    nfs-client
+    open-iscsi
+
+    # Intel iGPU firmware + VA-API userspace driver
+    kernel-firmware-intel
+    intel-media-driver
+
+    # Git is needed to clone the GitOps repo on first login
+    git-core
+)
+
+log "installing ${#PACKAGES[@]} packages"
+if ! zypper --non-interactive install "${PACKAGES[@]}"; then
+    die "package installation failed — check zypper output above"
+fi
+log "packages installed successfully"
+
+# ── 4. Service enablement ───────────────────────────────────────────────────
+
+readonly -a ENABLE_SERVICES=(
+    cockpit.socket  # Web management UI (on-demand socket activation)
+    sshd.service    # Remote access
+)
+
+for svc in "${ENABLE_SERVICES[@]}"; do
+    if systemctl enable "${svc}" 2>/dev/null; then
+        log "enabled ${svc}"
+    else
+        warn "failed to enable ${svc} — may need manual intervention"
+    fi
+done
+
+# ── 5. Immutable filesystem paths ──────────────────────────────────────────
+# /mnt lives on the immutable Btrfs root. After this boot completes, the
+# snapshot becomes read-only. This is our ONLY chance to create paths here.
+# /var and /etc (overlayfs) remain writable and are handled by bootstrap.sh.
+
+if [[ -d "${CONF_DOWNLOADS_PATH}" ]]; then
+    log "${CONF_DOWNLOADS_PATH} already exists — verifying permissions"
+else
+    log "creating ${CONF_DOWNLOADS_PATH} (immutable root — now or never)"
+    mkdir -p "${CONF_DOWNLOADS_PATH}"
+fi
+
+chown "${CONF_DOWNLOADS_UID}:${CONF_DOWNLOADS_GID}" "${CONF_DOWNLOADS_PATH}"
+chmod 2775 "${CONF_DOWNLOADS_PATH}"
+
+# ── Done ────────────────────────────────────────────────────────────────────
+
+log "first-boot provisioning complete"
+log "next steps: clone your k3s-cluster repo, run scripts/bootstrap.sh"

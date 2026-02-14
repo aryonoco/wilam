@@ -1,0 +1,33 @@
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: local-downloads
+spec:
+  capacity:
+    storage: 500Gi
+  # ReadWriteOnce: safe on single-node (all pods co-located).
+  # Change to ReadWriteMany if adding a second node.
+  accessModes: [ReadWriteOnce]
+  hostPath:
+    path: /mnt/downloads
+    type: DirectoryOrCreate
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - key: kubernetes.io/hostname
+              operator: In
+              values: [k3s-node]
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: local-downloads
+  namespace: media
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: ""
+  resources:
+    requests:
+      storage: 500Gi
+  volumeName: local-downloads
