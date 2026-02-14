@@ -69,14 +69,36 @@ spec:
   egress:
     - to: [{podSelector: {}}]
 ---
-# Immich internet (maps, models)
+# Immich server internet (maps, geocoding)
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: immich-internet
+  name: immich-server-internet
   namespace: immich
 spec:
-  podSelector: {}
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: server
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except: [10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16]
+      ports:
+        - {protocol: TCP, port: 443}
+        - {protocol: TCP, port: 80}
+---
+# Immich ML internet (model downloads)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: immich-ml-internet
+  namespace: immich
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: machine-learning
   policyTypes: [Egress]
   egress:
     - to:

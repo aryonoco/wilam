@@ -357,7 +357,7 @@ if command -v git &>/dev/null && [[ -d "${REPO_ROOT}/.git" ]]; then
         infrastructure/certs/porkbun-secret.sops.yaml \
         apps/immich/pg-secret.sops.yaml 2>/dev/null || true
     if ! git diff --cached --quiet 2>/dev/null; then
-        git commit -m "chore: add SOPS-encrypted secrets [bootstrap]" --no-verify
+        git commit -m "chore: add SOPS-encrypted secrets [bootstrap]"
         git push origin main
         log "  encrypted secrets committed and pushed"
     else

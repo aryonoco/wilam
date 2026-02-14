@@ -65,6 +65,8 @@ spec:
               value: "--data-checksums"
             - name: POSTGRES_PASSWORD_FILE
               value: "/run/secrets/postgresql-password"
+            - name: DB_STORAGE_TYPE
+              value: "SSD"
           startupProbe:
             exec:
               command: ["pg_isready", "-U", "immich", "-d", "immich"]

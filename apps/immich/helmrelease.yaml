@@ -14,23 +14,6 @@ spec:
         name: immich
         namespace: flux-system
   values:
-    controllers:
-      main:
-        containers:
-          main:
-            image:
-              tag: v2.5.6
-            env:
-              TZ: "UTC"
-              DB_HOSTNAME: immich-postgresql
-              DB_USERNAME: immich
-              DB_DATABASE_NAME: immich
-              DB_PASSWORD:
-                valueFrom:
-                  secretKeyRef:
-                    name: immich-postgresql
-                    key: postgresql-password
-
     immich:
       persistence:
         library:
@@ -47,7 +30,18 @@ spec:
             main:
               image:
                 repository: ghcr.io/immich-app/immich-server
+                tag: v2.5.6
                 pullPolicy: IfNotPresent
+              env:
+                TZ: "UTC"
+                DB_HOSTNAME: immich-postgresql
+                DB_USERNAME: immich
+                DB_DATABASE_NAME: immich
+                DB_PASSWORD:
+                  valueFrom:
+                    secretKeyRef:
+                      name: immich-postgresql
+                      key: postgresql-password
               resources:
                 requests:
                   cpu: 200m
