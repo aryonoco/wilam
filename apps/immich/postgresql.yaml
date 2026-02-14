@@ -26,11 +26,36 @@ spec:
       labels:
         app: immich-postgresql
     spec:
+      automountServiceAccountToken: false
+      securityContext:
+        fsGroup: 999
+        fsGroupChangePolicy: "OnRootMismatch"
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: postgresql
           image: ghcr.io/immich-app/postgres:14-vectorchord0.4.3-pgvectors0.2.0
+          args:
+            - "postgres"
+            - "-c"
+            - "config_file=/etc/postgresql/postgresql.conf"
+            - "-c"
+            - "max_connections=20"
+            - "-c"
+            - "log_connections=on"
+            - "-c"
+            - "log_disconnections=on"
+            - "-c"
+            - "log_statement=ddl"
+          securityContext:
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: true
+            capabilities:
+              drop: ["ALL"]
+              add: ["SETUID", "SETGID"]
           ports:
             - containerPort: 5432
+              protocol: TCP
           env:
             - name: POSTGRES_USER
               value: "immich"
@@ -38,16 +63,40 @@ spec:
               value: "immich"
             - name: POSTGRES_INITDB_ARGS
               value: "--data-checksums"
-            - name: POSTGRES_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: immich-postgresql
-                  key: postgresql-password
+            - name: POSTGRES_PASSWORD_FILE
+              value: "/run/secrets/postgresql-password"
+          startupProbe:
+            exec:
+              command: ["pg_isready", "-U", "immich", "-d", "immich"]
+            periodSeconds: 5
+            failureThreshold: 30
+            timeoutSeconds: 5
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "immich", "-d", "immich"]
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          livenessProbe:
+            exec:
+              command: ["pg_isready", "-U", "immich", "-d", "immich"]
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
           volumeMounts:
             - name: data
               mountPath: /var/lib/postgresql/data
             - name: dshm
               mountPath: /dev/shm
+            - name: tmp
+              mountPath: /tmp
+            - name: run-postgresql
+              mountPath: /var/run/postgresql
+            - name: etc-postgresql
+              mountPath: /etc/postgresql
+            - name: pg-secret
+              mountPath: /run/secrets
+              readOnly: true
           resources:
             requests:
               cpu: 100m
@@ -62,6 +111,22 @@ spec:
           emptyDir:
             medium: Memory
             sizeLimit: 128Mi
+        - name: tmp
+          emptyDir:
+            sizeLimit: 64Mi
+        - name: run-postgresql
+          emptyDir:
+            medium: Memory
+            sizeLimit: 8Mi
+        - name: etc-postgresql
+          emptyDir:
+            sizeLimit: 8Mi
+        - name: pg-secret
+          secret:
+            secretName: immich-postgresql
+            items:
+              - key: postgresql-password
+                path: postgresql-password
 ---
 apiVersion: v1
 kind: Service

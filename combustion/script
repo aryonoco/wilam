@@ -41,7 +41,7 @@ log "starting first-boot provisioning"
 # ── Configuration (edit before use) ─────────────────────────────────────────
 # These are the ONLY values you need to change.
 
-readonly CONF_HOSTNAME="k3s-node.local"
+readonly CONF_HOSTNAME="k3s-node.internal"
 readonly CONF_TIMEZONE="UTC"
 readonly CONF_ADMIN_USER="admin"
 
